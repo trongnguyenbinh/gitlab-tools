@@ -139,4 +139,5 @@ frontend-repos/
 backend-repos/
 devops-repos/
 monitored-clone/
-my-repos/
+!outputs/
+outputs/*

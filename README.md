@@ -29,18 +29,70 @@ A suite of Python tools for managing GitLab repositories:
 
 ## Installation
 
+### Option 1: Install as Package (Recommended)
+
 1. Ensure Python 3.13 or higher is installed:
    ```bash
    python --version
    # Should output: Python 3.13.x or higher
    ```
 
-2. Clone or download this project
+2. Clone this repository:
+   ```bash
+   git clone <repository-url>
+   cd gitlab-cloner
+   ```
 
-3. Install the required dependencies:
+3. Install the package:
+   ```bash
+   pip install -e .
+   ```
+
+4. Run using installed commands:
+   ```bash
+   gitlab-clone --help
+   gitlab-publish --help
+   ```
+
+### Option 2: Run from Source
+
+1. Ensure Python 3.13 or higher is installed
+
+2. Clone this repository
+
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
+
+4. Run directly:
+   ```bash
+   python -m gitlab_tools.cli_cloner --help
+   python -m gitlab_tools.cli_publisher --help
+   ```
+
+## Usage
+
+## Project Structure
+
+```
+gitlab-cloner/
+├── src/
+│   └── gitlab_tools/          # Main package
+│       ├── __init__.py        # Package initialization
+│       ├── cloner.py          # GitLab Cloner module
+│       ├── publisher.py       # GitLab Publisher module
+│       ├── config.py          # Configuration module
+│       ├── cli_cloner.py      # CLI for cloner
+│       └── cli_publisher.py   # CLI for publisher
+├── tests/                     # Test suite
+│   ├── __init__.py
+│   └── test_cloner.py
+├── docs/                      # Documentation
+├── requirements.txt           # Dependencies
+├── setup.py                   # Package setup
+└── README.md                  # This file
+```
 
 ## Usage
 
@@ -48,8 +100,14 @@ A suite of Python tools for managing GitLab repositories:
 
 #### Command Line Interface
 
+**If installed as package:**
 ```bash
-python gitlab_cloner.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group <GROUP_ID_OR_PATH> --destination <LOCAL_PATH>
+gitlab-clone --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group <GROUP_ID_OR_PATH> --destination <LOCAL_PATH>
+```
+
+**If running from source:**
+```bash
+python -m gitlab_tools.cli_cloner --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group <GROUP_ID_OR_PATH> --destination <LOCAL_PATH>
 ```
 
 #### Parameters
@@ -64,21 +122,27 @@ python gitlab_cloner.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group
 
 ```bash
 # Clone using group ID
-python gitlab_cloner.py --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group 123 --destination ./my-repos
+gitlab-clone --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group 123 --destination ./my-repos
 
 # Clone using group path
-python gitlab_cloner.py --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group "my-organization/development" --destination ./dev-repos
+gitlab-clone --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group "my-organization/development" --destination ./dev-repos
 
 # Enable verbose logging
-python gitlab_cloner.py --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group 123 --destination ./repos --verbose
+gitlab-clone --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group 123 --destination ./repos --verbose
 ```
 
 ### GitLab Publisher - Publish Repositories to GitLab
 
 #### Command Line Interface
 
+**If installed as package:**
 ```bash
-python gitlab_publisher.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group-id <TARGET_GROUP_ID> --source <LOCAL_PATH>
+gitlab-publish --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group-id <TARGET_GROUP_ID> --source <LOCAL_PATH>
+```
+
+**If running from source:**
+```bash
+python -m gitlab_tools.cli_publisher --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group-id <TARGET_GROUP_ID> --source <LOCAL_PATH>
 ```
 
 #### Parameters
@@ -96,13 +160,13 @@ python gitlab_publisher.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --gr
 
 ```bash
 # Publish all repositories from a directory
-python gitlab_publisher.py --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group-id 456 --source ./my-repos
+gitlab-publish --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group-id 456 --source ./my-repos
 
 # Migrate repositories from one GitLab to another
 # Step 1: Clone from source
-python gitlab_cloner.py --gitlab-url https://source.gitlab.com --token SOURCE_TOKEN --group 123 --destination ./temp-repos
+gitlab-clone --gitlab-url https://source.gitlab.com --token SOURCE_TOKEN --group 123 --destination ./temp-repos
 # Step 2: Publish to target
-python gitlab_publisher.py --gitlab-url https://target.gitlab.com --token TARGET_TOKEN --group-id 456 --source ./temp-repos
+gitlab-publish --gitlab-url https://target.gitlab.com --token TARGET_TOKEN --group-id 456 --source ./temp-repos
 ```
 
 ## How It Works
@@ -189,7 +253,7 @@ The tool provides detailed logging including:
 
 ### 1. Backup GitLab Repositories
 ```bash
-python gitlab_cloner.py \
+gitlab-clone \
   --gitlab-url https://gitlab.company.com \
   --token YOUR_TOKEN \
   --group 123 \
@@ -199,14 +263,14 @@ python gitlab_cloner.py \
 ### 2. Migrate Between GitLab Instances
 ```bash
 # Step 1: Clone from source
-python gitlab_cloner.py \
+gitlab-clone \
   --gitlab-url https://source.gitlab.com \
   --token SOURCE_TOKEN \
   --group 123 \
   --destination ./migration-temp
 
 # Step 2: Publish to target
-python gitlab_publisher.py \
+gitlab-publish \
   --gitlab-url https://target.gitlab.com \
   --token TARGET_TOKEN \
   --group-id 456 \
@@ -216,7 +280,7 @@ python gitlab_publisher.py \
 ### 3. Regular Sync/Updates
 ```bash
 # Run periodically to keep local copies up-to-date
-python gitlab_cloner.py \
+gitlab-clone \
   --gitlab-url https://gitlab.company.com \
   --token YOUR_TOKEN \
   --group 123 \
@@ -225,11 +289,33 @@ python gitlab_cloner.py \
 
 ### 4. Publish Local Projects to GitLab
 ```bash
-python gitlab_publisher.py \
+gitlab-publish \
   --gitlab-url https://gitlab.company.com \
   --token YOUR_TOKEN \
   --group-id 789 \
   --source ./local-projects
+```
+
+### 5. Programmatic Usage
+
+```python
+from gitlab_tools import GitLabCloner, GitLabPublisher
+
+# Clone repositories
+cloner = GitLabCloner(
+    gitlab_url="https://gitlab.company.com",
+    access_token="your-token",
+    destination_path="./repos"
+)
+cloner.clone_group_recursively("123")
+
+# Publish repositories
+publisher = GitLabPublisher(
+    gitlab_url="https://gitlab.company.com",
+    access_token="your-token",
+    source_path="./repos"
+)
+publisher.scan_and_publish(456)
 ```
 
 ## Troubleshooting

@@ -12,8 +12,8 @@ import shutil
 from pathlib import Path
 import os
 
-from gitlab_cloner import GitLabCloner
-from config import Config
+from gitlab_tools.cloner import GitLabCloner
+from gitlab_tools.config import Config
 
 
 class TestGitLabCloner(unittest.TestCase):
