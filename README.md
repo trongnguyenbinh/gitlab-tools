@@ -1,6 +1,8 @@
-# GitLab Repository Cloner
+# GitLab Repository Tools
 
-A Python tool to recursively clone all Git repositories from a GitLab self-hosted server within a specified group hierarchy.
+A suite of Python tools for managing GitLab repositories:
+- **GitLab Cloner**: Recursively clone all Git repositories from a GitLab group hierarchy
+- **GitLab Publisher**: Publish local Git repositories to a GitLab group hierarchy
 
 ## Features
 
@@ -29,13 +31,15 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Command Line Interface
+### GitLab Cloner - Clone Repositories from GitLab
+
+#### Command Line Interface
 
 ```bash
 python gitlab_cloner.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group <GROUP_ID_OR_PATH> --destination <LOCAL_PATH>
 ```
 
-### Parameters
+#### Parameters
 
 - `--gitlab-url`: GitLab base URL (e.g., "https://gitlab.company.com")
 - `--token`: GitLab API access token for authentication
@@ -43,7 +47,7 @@ python gitlab_cloner.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group
 - `--destination`: Local destination path where repositories should be cloned
 - `--verbose`, `-v`: Enable verbose logging (optional)
 
-### Examples
+#### Examples
 
 ```bash
 # Clone using group ID
@@ -56,7 +60,41 @@ python gitlab_cloner.py --gitlab-url https://gitlab.company.com --token glpat-xx
 python gitlab_cloner.py --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group 123 --destination ./repos --verbose
 ```
 
+### GitLab Publisher - Publish Repositories to GitLab
+
+#### Command Line Interface
+
+```bash
+python gitlab_publisher.py --gitlab-url <GITLAB_URL> --token <ACCESS_TOKEN> --group-id <TARGET_GROUP_ID> --source <LOCAL_PATH>
+```
+
+#### Parameters
+
+- `--gitlab-url`: GitLab base URL (e.g., "https://gitlab.company.com")
+- `--token`: GitLab API access token with write permissions
+- `--group-id`: Target parent group ID in GitLab where repositories will be created
+- `--source`: Local source path containing repositories to publish
+- `--use-ssh`: Use SSH URLs instead of HTTPS (requires SSH keys configured)
+- `--verbose`, `-v`: Enable verbose logging (optional)
+
+**Note**: By default, the publisher uses HTTPS with token authentication (recommended). Only use `--use-ssh` if you have SSH keys configured with GitLab.
+
+#### Examples
+
+```bash
+# Publish all repositories from a directory
+python gitlab_publisher.py --gitlab-url https://gitlab.company.com --token glpat-xxxxxxxxxxxxxxxxxxxx --group-id 456 --source ./my-repos
+
+# Migrate repositories from one GitLab to another
+# Step 1: Clone from source
+python gitlab_cloner.py --gitlab-url https://source.gitlab.com --token SOURCE_TOKEN --group 123 --destination ./temp-repos
+# Step 2: Publish to target
+python gitlab_publisher.py --gitlab-url https://target.gitlab.com --token TARGET_TOKEN --group-id 456 --source ./temp-repos
+```
+
 ## How It Works
+
+### Cloner
 
 1. **Authentication**: Connects to the GitLab API using the provided access token
 2. **Initial Group Scan**: Scans the specified group to identify repositories and subgroups
@@ -69,6 +107,14 @@ python gitlab_cloner.py --gitlab-url https://gitlab.company.com --token glpat-xx
      - Returns to the original branch after updating
 4. **Subgroup Processing**: Creates local directories for subgroups and queues them for processing
 5. **Recursive Processing**: Continues processing subgroups until all levels are complete
+
+### Publisher
+
+1. **Authentication**: Connects to the GitLab API using the provided access token
+2. **Repository Scanning**: Recursively scans the source directory for Git repositories
+3. **Group/Subgroup Creation**: Creates groups and subgroups matching the local directory structure
+4. **Project Creation**: Creates projects in GitLab for each repository found
+5. **Branch Pushing**: Pushes all local branches to the remote GitLab repository using HTTPS with embedded token authentication (default) or SSH (if `--use-ssh` is specified)
 
 ## Directory Structure
 
@@ -88,13 +134,25 @@ destination_path/
 
 ## GitLab Access Token
 
-To use this tool, you need a GitLab access token with appropriate permissions:
+### For Cloner
+
+You need a GitLab access token with read permissions:
 
 1. Go to your GitLab instance
 2. Navigate to User Settings → Access Tokens
 3. Create a new token with the following scopes:
    - `read_api` (to read group and project information)
    - `read_repository` (to clone repositories)
+
+### For Publisher
+
+You need a GitLab access token with write permissions:
+
+1. Go to your GitLab instance
+2. Navigate to User Settings → Access Tokens
+3. Create a new token with the following scopes:
+   - `api` (to create groups and projects)
+   - `write_repository` (to push code)
 
 ## Error Handling
 
