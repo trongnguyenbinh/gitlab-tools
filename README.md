@@ -424,6 +424,15 @@ After running the cloner, you have:
 **Problem**: "Repository already exists"
 - **Behavior**: The tool now automatically updates existing repositories with all branches
 
+**Problem**: "No 'origin' remote found"
+- **Cause**: Repository doesn't have an 'origin' remote configured
+- **Solution**: Ensure the repository was cloned properly with a valid remote URL
+
+**Problem**: "'IterableList' object has no attribute 'origin'"
+- **Cause**: Internal error when accessing git remotes
+- **Solution**: This is automatically handled by the tool. If you see this error, update to the latest version
+- **Details**: The tool safely iterates through remotes instead of using dot notation
+
 ### Publisher Issues
 
 **Problem**: "fatal: Could not read from remote repository"
@@ -438,11 +447,546 @@ After running the cloner, you have:
 - **Check**: Token has `write_repository` scope
 - **Check**: You have permission to create projects in the target group
 
+## Cleanup Feature
+
+The cleanup feature allows you to automatically remove build artifacts, dependencies, and temporary files from repositories across all branches. This is useful for reducing repository size before backup or migration.
+
+### Overview
+
+The cleanup feature:
+- Removes files matching configurable patterns (build artifacts, dependencies, logs, etc.)
+- Operates on all branches in a repository
+- Supports dry-run mode to preview changes before applying them
+- Optionally auto-commits and pushes changes
+- Provides detailed logging at every step
+
+### Quick Start
+
+**Preview cleanup (dry-run with detailed logs):**
+```bash
+python -m gitlab_tools.cli_cloner \
+  --gitlab-url https://gitlab.example.com \
+  --token glpat-xxxxxxxxxxxxxxxxxxxx \
+  --group my-group \
+  --destination /repos \
+  --cleanup \
+  --cleanup-dry-run \
+  --verbose
+```
+
+**Run actual cleanup with auto-commit:**
+```bash
+python -m gitlab_tools.cli_cloner \
+  --gitlab-url https://gitlab.example.com \
+  --token glpat-xxxxxxxxxxxxxxxxxxxx \
+  --group my-group \
+  --destination /repos \
+  --cleanup \
+  --cleanup-auto-commit \
+  --verbose
+```
+
+### Cleanup Parameters
+
+- `--cleanup`: Enable cleanup feature
+- `--cleanup-dry-run`: Preview changes without modifying files (recommended first step)
+- `--cleanup-auto-commit`: Automatically commit and push cleanup changes
+- `--cleanup-patterns`: Comma-separated patterns to remove (default: `target/,build/,dist/,out/,node_modules/,vendor/,*.log,*.tmp,*.class,*.jar`)
+- `--cleanup-keep-patterns`: Comma-separated patterns to protect from removal (whitelist)
+
+### Detailed Logging
+
+The cleanup feature provides comprehensive logging at every step to verify it's working correctly:
+
+#### What to Look For in Logs
+
+**✅ Success Indicators:**
+
+| Log Message | Meaning |
+|-------------|---------|
+| `Found N remote branches` | All branches discovered |
+| `[1/N] Processing branch` | Each branch being processed |
+| `✓ Checked out branch` | Branch checkout succeeded |
+| `[CLEANUP] Starting cleanup` | Cleanup started on branch |
+| `[PATTERN] Match found` | File matched cleanup pattern |
+| `[DRY-RUN] Would remove` | File would be removed (dry-run mode) |
+| `[REMOVED]` | File was actually removed |
+| `Scan complete: X scanned, Y matched` | Scan finished with results |
+| `✓ Cleanup completed successfully` | Cleanup succeeded on branch |
+| `✓ Successfully returned to original branch` | Returned to starting branch |
+| `Branches processed: N` | All branches were processed |
+
+**⚠️ Warning Signs:**
+
+| Log Message | Issue |
+|-------------|-------|
+| `Found 0 remote branches` | No branches found |
+| No `[CLEANUP]` logs | Cleanup not running |
+| `No files matched cleanup patterns` | No files to remove |
+| `Could not return to original branch` | Git state issue |
+| `Failed to commit/push` | Auto-commit failed |
+
+#### Example Log Output
+
+```
+======================================================================
+Starting branch processing for project: my-project
+======================================================================
+Found 3 remote branches: ['origin/main', 'origin/develop', 'origin/feature']
+Current branch before processing: main
+
+[1/3] Processing branch: main
+  ✓ Checked out branch: main
+  ✓ Pulled latest updates for branch: main
+  [CLEANUP] Starting cleanup for branch: main
+  [CLEANUP] Patterns to remove: ['target/', 'build/', 'dist/', ...]
+  [PATTERN] Match found: build/ matches pattern 'build/'
+  [CLEANUP] Removing: /repos/my-project/build
+    [DRY-RUN] Would remove directory: /repos/my-project/build
+  [PATTERN] Match found: app.log matches pattern '*.log'
+  [CLEANUP] Removing: /repos/my-project/app.log
+    [DRY-RUN] Would remove file: /repos/my-project/app.log
+  [CLEANUP] Scan complete: 1250 files scanned, 2 matched patterns
+  [CLEANUP] Successfully removed 2 items
+  ✓ Cleanup completed successfully for branch: main
+
+[2/3] Processing branch: develop
+  ✓ Checked out branch: develop
+  ✓ Pulled latest updates for branch: develop
+  [CLEANUP] Starting cleanup for branch: develop
+  [CLEANUP] Scan complete: 1250 files scanned, 0 matched patterns
+  ✓ Cleanup completed successfully for branch: develop
+
+======================================================================
+SUMMARY for my-project:
+  Total branches found: 3
+  Branches processed: 3
+  Branches with cleanup: 1
+  Status: Successfully updated all branches
+======================================================================
+```
+
+### Cleanup Workflow
+
+**Recommended workflow:**
+
+1. **Preview with dry-run:**
+   ```bash
+   python -m gitlab_tools.cli_cloner \
+     --gitlab-url https://gitlab.example.com \
+     --token glpat-xxxxxxxxxxxxxxxxxxxx \
+     --group my-group \
+     --destination /repos \
+     --cleanup \
+     --cleanup-dry-run \
+     --verbose
+   ```
+   - Review logs to verify all branches are being processed
+   - Check pattern matching logs to confirm correct files are identified
+   - Verify no important files are being removed
+
+2. **Run actual cleanup:**
+   ```bash
+   python -m gitlab_tools.cli_cloner \
+     --gitlab-url https://gitlab.example.com \
+     --token glpat-xxxxxxxxxxxxxxxxxxxx \
+     --group my-group \
+     --destination /repos \
+     --cleanup \
+     --cleanup-auto-commit \
+     --verbose
+   ```
+   - Cleanup runs on all branches
+   - .gitignore is automatically updated with cleanup patterns
+   - Files matching cleanup patterns are removed from Git's cache
+   - Changes are automatically committed and pushed
+   - Review final summary to confirm all branches processed
+
+### Preventing Future Tracking
+
+The cleanup feature automatically prevents cleaned-up files from being tracked by Git in the future through three steps:
+
+1. **Removes Files**: Deletes files matching cleanup patterns from the working directory
+2. **Updates .gitignore**: Adds cleanup patterns to .gitignore to prevent future commits
+3. **Cleans Git Cache**: Removes existing files from Git's index using `git rm --cached`
+
+This ensures that:
+- ✓ Cleaned files won't reappear in future commits
+- ✓ .gitignore rules apply to existing files in the repository
+- ✓ Future developers won't accidentally commit these files
+- ✓ Repository size stays reduced over time
+
+#### Auto-Commit and Push
+
+When `--cleanup-auto-commit` is enabled, the cleanup feature automatically:
+
+1. **Stages Changes**: All modifications (.gitignore updates and git cache removals) are staged
+2. **Commits Changes**: Creates a commit with the message "chore: cleanup unnecessary files"
+3. **Pushes to Remote**: Pushes the commit to the remote repository for all team members
+
+**What happens during cleanup with auto-commit:**
+```
+1. Files matching patterns are removed from disk
+   └─ [CLEANUP] Removing: /repos/my-project/build/
+
+2. .gitignore is updated with cleanup patterns
+   └─ [GITIGNORE] Added 15 patterns to .gitignore
+
+3. Files are removed from Git's cache (index)
+   └─ [GIT-CACHE] Removed 3 pattern(s) from Git cache
+
+4. All changes are staged
+   └─ git add -A
+
+5. Changes are committed
+   └─ git commit -m "chore: cleanup unnecessary files"
+
+6. Commit is pushed to remote
+   └─ git push origin branch-name
+```
+
+#### Commit Details
+
+The cleanup commit includes:
+- **Modified .gitignore**: Contains new cleanup patterns to prevent future tracking
+- **Removed files from Git cache**: Files are no longer tracked by Git but remain on disk
+- **Commit message**: "chore: cleanup unnecessary files" (configurable)
+
+This ensures that:
+- ✓ All team members receive the .gitignore updates
+- ✓ Cleaned files won't be re-added in future commits
+- ✓ Repository history shows cleanup was performed
+- ✓ Changes are shared across all branches and developers
+
+### Verification Checklist
+
+Before running actual cleanup, verify these in the dry-run logs:
+
+- [ ] "Found N remote branches" - All branches discovered
+- [ ] "[1/N] Processing branch" - Each branch processed
+- [ ] "✓ Checked out branch" - Branch checkout succeeded
+- [ ] "[CLEANUP] Starting cleanup" - Cleanup ran
+- [ ] "[PATTERN] Match found" - Files matched patterns
+- [ ] "[DRY-RUN] Would remove" - Files identified for removal
+- [ ] "Scan complete: X files scanned, Y matched" - Scan finished
+- [ ] "✓ Cleanup completed successfully" - Cleanup succeeded
+- [ ] "✓ Successfully returned to original branch" - Returned to start
+- [ ] "Branches processed: N" - All branches processed
+
+### Protecting Important Files
+
+Use `--cleanup-keep-patterns` to protect important files from removal:
+
+```bash
+python -m gitlab_tools.cli_cloner \
+  --gitlab-url https://gitlab.example.com \
+  --token glpat-xxxxxxxxxxxxxxxxxxxx \
+  --group my-group \
+  --destination /repos \
+  --cleanup \
+  --cleanup-dry-run \
+  --cleanup-keep-patterns "important.log,config.log,README.md" \
+  --verbose
+```
+
+### Troubleshooting Cleanup
+
+**Q: Only some branches show cleanup**
+- Check logs for error messages in failed branches
+- Verify branch checkout and pull operations succeeded
+
+**Q: No files are being removed**
+- Check for "No files matched cleanup patterns" in logs
+- Verify patterns are correct and files actually exist
+- Use `--verbose` to see detailed pattern matching
+
+**Q: Important files were removed**
+- Use `--cleanup-keep-patterns` to whitelist them
+- Always use `--cleanup-dry-run` first to preview changes
+
+**Q: Can't see individual file removals**
+- Use `--verbose` flag for debug-level logs
+- Check for `[PATTERN]` and `[CLEANUP]` prefixed messages
+
+**Q: .gitignore update failed**
+- Check file permissions on .gitignore
+- Verify the repository is writable
+- Check logs for "[GITIGNORE]" messages
+
+**Q: Git cache removal failed**
+- Ensure Git is installed and accessible from command line
+- Check that you have permission to modify the repository
+- Look for "[GIT-CACHE]" messages in logs
+- The cleanup will still succeed even if cache removal fails
+
+**Q: Files still appear in Git history**
+- Use the `--cleanup-history` flag to remove files from git history
+- See the "Git History Cleanup" section below for details
+- The .gitignore update prevents future commits with these files
+
+**Q: Cleanup committed but .gitignore wasn't updated**
+- Check if .gitignore already contained the patterns
+- Look for "[GITIGNORE] All cleanup patterns already in .gitignore" in logs
+- Verify .gitignore has proper permissions
+
+**Q: Auto-commit failed**
+- Check logs for "[CLEANUP] Failed to commit/push cleanup" messages
+- Verify you have push permissions to the remote repository
+- Check that the branch exists on the remote
+- Ensure Git is properly configured with user.name and user.email
+- Try running without auto-commit first to verify cleanup works
+
+**Q: .gitignore changes not pushed to remote**
+- Check logs for "[CLEANUP] Pushed cleanup changes" message
+- Verify network connectivity to the remote repository
+- Check that you have push permissions
+- Ensure the branch is properly tracked on the remote
+- Look for Git error messages in the logs
+
+**Q: Commit message is wrong**
+- Use `--cleanup-commit-message` to customize the message
+- Default message is "chore: cleanup unnecessary files"
+- Verify the message in git log after cleanup completes
+
+**Q: Changes committed but not all files removed**
+- This is expected - cleanup only removes files matching patterns
+- Check the cleanup patterns with `--cleanup-patterns`
+- Use `--cleanup-dry-run` to preview what would be removed
+- Verify patterns are correct for your file types
+
+### Default Cleanup Patterns
+
+By default, the following patterns are removed:
+
+- **Build artifacts**: `target/`, `build/`, `dist/`, `out/`
+- **Dependencies**: `node_modules/`, `vendor/`
+- **Compiled files**: `*.class`, `*.jar`
+- **Temporary files**: `*.log`, `*.tmp`
+
+Override with `--cleanup-patterns` if needed.
+
+### Git History Cleanup
+
+The `--cleanup-history` flag enables rewriting git history to permanently remove junk files from all commits across all branches. This is useful for significantly reducing repository size when large build artifacts or dependencies were accidentally committed in the past.
+
+**⚠️ WARNING**: This is a destructive operation that:
+- Rewrites all commit hashes in the repository
+- Requires force-pushing to all branches
+- Cannot be undone once pushed to remote
+- May cause issues for other developers who have cloned the repository
+
+**Prerequisites:**
+```bash
+pip install git-filter-repo
+```
+
+**Usage:**
+```bash
+# Preview what would be removed from history (dry-run with detailed analysis)
+python -m gitlab_tools.cli_cloner \
+  --gitlab-url https://gitlab.example.com \
+  --token glpat-xxxxxxxxxxxxxxxxxxxx \
+  --group my-group \
+  --destination /repos \
+  --cleanup \
+  --cleanup-history \
+  --cleanup-dry-run \
+  --verbose
+
+# Actually rewrite history and force push
+python -m gitlab_tools.cli_cloner \
+  --gitlab-url https://gitlab.example.com \
+  --token glpat-xxxxxxxxxxxxxxxxxxxx \
+  --group my-group \
+  --destination /repos \
+  --cleanup \
+  --cleanup-history \
+  --cleanup-auto-commit \
+  --verbose
+```
+
+**How it works:**
+1. Processes all branches normally (checkout, pull, cleanup)
+2. After all branches are processed, runs history analysis or `git-filter-repo`
+3. In dry-run: Analyzes all branches and generates detailed report
+4. In auto-commit: Removes all files matching cleanup patterns from all commits
+5. Force pushes all branches to remote with rewritten history
+
+**What gets removed from history:**
+- Only file patterns (e.g., `*.jar`, `*.war`, `*.class`, `*.zip`)
+- Directory patterns are NOT removed from history (only from current state)
+- Patterns are taken from `--cleanup-patterns`
+
+**Example dry-run output:**
+```
+======================================================================
+Starting git history cleanup for my-project...
+======================================================================
+    [HISTORY] Starting git history cleanup...
+    [HISTORY] This will rewrite git history and change all commit hashes!
+    [HISTORY] Will remove 3 file patterns from history:
+    [HISTORY]   - *.jar
+    [HISTORY]   - *.war
+    [HISTORY]   - *.zip
+    [HISTORY] DRY-RUN: Analyzing git history across all branches...
+    [HISTORY] Analysis Results:
+    [HISTORY] ============================================================
+    [HISTORY] Branch: feature/x (45 commits)
+    [HISTORY]   Files to remove from history:
+    [HISTORY]     - lib/commons.jar (appears in 8 commits, ~0.2 MB)
+    [HISTORY]     - lib/servlet.war (appears in 5 commits, ~0.1 MB)
+    [HISTORY]   Total: 2 files, 45 commits, ~0.3 MB
+    [HISTORY]
+    [HISTORY] Branch: feature/y (38 commits)
+    [HISTORY]   Files to remove from history:
+    [HISTORY]     - build/app.jar (appears in 12 commits, ~0.3 MB)
+    [HISTORY]   Total: 1 file, 38 commits, ~0.3 MB
+    [HISTORY]
+    [HISTORY] Branch: main (120 commits)
+    [HISTORY]   Files to remove from history:
+    [HISTORY]     - dist/app.zip (appears in 3 commits, ~0.4 MB)
+    [HISTORY]   Total: 1 file, 120 commits, ~0.4 MB
+    [HISTORY]
+    [HISTORY] ============================================================
+    [HISTORY] SUMMARY - DRY-RUN REPORT
+    [HISTORY] ============================================================
+    [HISTORY] Total branches analyzed: 3
+    [HISTORY] Total unique files to remove: 4
+    [HISTORY] Total commit references: 203
+    [HISTORY] Estimated size reduction: ~1.0 MB
+    [HISTORY]
+    [HISTORY] WARNING: This will rewrite ALL commit hashes!
+    [HISTORY]
+    [HISTORY] DRY-RUN: No changes made to repository
+    [HISTORY] To actually rewrite history, run with --cleanup-auto-commit
+```
+
+**Example auto-commit output:**
+```
+======================================================================
+Starting git history cleanup for my-project...
+======================================================================
+    [HISTORY] Starting git history cleanup...
+    [HISTORY] This will rewrite git history and change all commit hashes!
+    [HISTORY] Will remove 3 file patterns from history:
+    [HISTORY]   - *.jar
+    [HISTORY]   - *.war
+    [HISTORY]   - *.zip
+    [HISTORY] Running: git filter-repo --invert-paths --path-glob *.jar ...
+    [HISTORY] Successfully rewrote git history
+    [HISTORY] Force pushing 3 branches to remote...
+    [HISTORY] Force pushing branch: main
+    [HISTORY] ✓ Successfully force pushed: main
+    [HISTORY] Force pushing branch: feature/x
+    [HISTORY] ✓ Successfully force pushed: feature/x
+    [HISTORY] Force pushing branch: feature/y
+    [HISTORY] ✓ Successfully force pushed: feature/y
+    [HISTORY] Force push summary: 3 succeeded, 0 failed
+✓ Git history cleanup completed successfully
+```
+
+**Best practices:**
+1. **Always use dry-run first** to preview what will be removed
+   - Shows detailed per-branch analysis
+   - Lists all files that would be removed
+   - Estimates size reduction
+   - No changes made to repository
+2. **Review the dry-run report** carefully
+   - Check which branches are affected
+   - Verify no important files will be removed
+   - Note the estimated size reduction
+3. **Coordinate with your team** before rewriting history
+4. **Backup the repository** before running history cleanup
+5. **Notify team members** to re-clone after history rewrite
+6. **Use with auto-commit** to ensure changes are pushed
+
+**Troubleshooting:**
+
+**Q: git-filter-repo not found**
+- Install it: `pip install git-filter-repo`
+- Verify installation: `git filter-repo --version`
+
+**Q: Force push failed**
+- Check that you have push permissions to all branches
+- Verify network connectivity to remote repository
+- Check for branch protection rules that prevent force push
+
+**Q: Repository size didn't decrease**
+- Git keeps old objects for ~2 weeks by default
+- Run `git gc --aggressive --prune=now` to clean up immediately
+- On GitLab, go to Settings > Repository > Repository cleanup to recalculate size
+
+**Q: Other developers can't pull after history rewrite**
+- This is expected - they need to re-clone the repository
+- Or they can run: `git fetch origin && git reset --hard origin/branch-name`
+- Coordinate with team before running history cleanup
+
+**Q: Some files still in history**
+- Only file patterns (*.jar, *.zip) are removed from history
+- Directory patterns (build/, dist/) are only removed from current state
+- Check the log to see which patterns were processed
+
+### Cleanup and History Cleanup Issues
+
+**Q: Only some branches show cleanup**
+- Check logs for error messages in failed branches
+- Verify branch checkout and pull operations succeeded
+
+**Q: No files are being removed**
+- Check for "No files matched cleanup patterns" in logs
+- Verify patterns are correct and files actually exist
+- Use `--verbose` to see detailed pattern matching
+
+**Q: Important files were removed**
+- Use `--cleanup-keep-patterns` to whitelist them
+- Always use `--cleanup-dry-run` first to preview changes
+
+**Q: .gitignore update failed**
+- Check file permissions on .gitignore
+- Verify the repository is writable
+- Check logs for "[GITIGNORE]" messages
+
+**Q: Auto-commit failed**
+- Check logs for "[CLEANUP] Failed to commit/push cleanup" messages
+- Verify you have push permissions to the remote repository
+- Ensure Git is properly configured with user.name and user.email
+
+**Q: Files still appear in Git history**
+- Use the `--cleanup-history` flag to remove files from git history
+- Always use `--cleanup-dry-run` first to preview what will be removed
+- The .gitignore update prevents future commits with these files
+
+**Q: git-filter-repo not found**
+- Install it: `pip install git-filter-repo`
+- Verify installation: `git filter-repo --version`
+
+**Q: Force push failed during history cleanup**
+- Check that you have push permissions to all branches
+- Verify network connectivity to remote repository
+- Check for branch protection rules that prevent force push
+
+**Q: Repository size didn't decrease after history cleanup**
+- Git keeps old objects for ~2 weeks by default
+- Run `git gc --aggressive --prune=now` to clean up immediately
+- On GitLab, go to Settings > Repository > Repository cleanup to recalculate size
+
+**Q: Other developers can't pull after history rewrite**
+- This is expected - they need to re-clone the repository
+- Or they can run: `git fetch origin && git reset --hard origin/branch-name`
+- Coordinate with team before running history cleanup
+
 ## Dependencies
 
 - `requests`: HTTP library for API calls
 - `python-gitlab`: Official GitLab API client
 - `gitpython`: Git operations in Python
 - `click`: Command-line interface framework
+- `tqdm`: Progress bar library
+- `git-filter-repo`: (Optional) Required for `--cleanup-history` feature
 
 All dependencies are listed in `requirements.txt` and installed automatically with `pip install -r requirements.txt`.
+
+To use the git history cleanup feature, install git-filter-repo separately:
+```bash
+pip install git-filter-repo
+```

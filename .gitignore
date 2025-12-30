@@ -141,3 +141,47 @@ devops-repos/
 monitored-clone/
 !outputs/
 outputs/*
+
+# Archive and Compressed Files
+# Prevent large archive files from being committed
+*.zip
+*.rar
+*.tar
+*.tar.gz
+*.tar.bz2
+*.7z
+*.gz
+*.bz2
+*.xz
+
+# Build Artifacts and Compiled Files
+# Remove these to reduce repository size
+*.jar
+*.war
+*.class
+*.o
+*.so
+*.exe
+*.dll
+*.dylib
+
+# Temporary and Backup Files
+# Prevent temporary files from being tracked
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDE and Editor Files
+# Already covered above, but explicitly listed for clarity
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
