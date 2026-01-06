@@ -25,58 +25,89 @@ from .progress import ProgressManager, BranchProgressManager, ErrorRecord
 class GitLabCloner:
     """Main class for cloning GitLab repositories recursively."""
     
-    def __init__(self, gitlab_url: str, access_token: str, destination_path: str, quiet: bool = False):
+    def __init__(self, gitlab_url: str, access_token: str, destination_path: str,
+                 quiet: bool = False, use_short_paths: bool = False,
+                 max_path_length: int = 240):
         """
         Initialize the GitLab cloner.
-        
+
         Args:
             gitlab_url: Base URL of the GitLab instance
             access_token: GitLab API access token
             destination_path: Local path where repositories will be cloned
             quiet: If True, suppress detailed logging and show progress bar only
+            use_short_paths: If True, use shortened directory names to avoid Windows path length limits
+            max_path_length: Maximum path length before warning (default 240 for Windows compatibility)
         """
         self.gitlab_url = gitlab_url.rstrip('/')
         self.access_token = access_token
         self.destination_path = Path(destination_path).resolve()
         self.quiet = quiet
-        
+        self.use_short_paths = use_short_paths
+        self.max_path_length = max_path_length
+
         # Initialize GitLab connection
         self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.access_token)
-        
+
         # Setup logging
         self.logger = self._setup_logging()
-        
+
         # Progress manager (set later in clone_group_recursively)
         self.progress_manager: Optional[ProgressManager] = None
-        
+
         # Statistics
         self.stats = {
             'repositories_cloned': 0,
             'repositories_updated': 0,
             'groups_processed': 0,
-            'errors': 0
+            'errors': 0,
+            'path_warnings': 0
         }
+
+        # Configure git for long paths on Windows
+        self._configure_git_for_long_paths()
     
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration."""
         logger = logging.getLogger('gitlab_cloner')
-        
+
         # In quiet mode, only show WARNING and ERROR level logs
         log_level = logging.WARNING if self.quiet else logging.INFO
         logger.setLevel(log_level)
-        
+
         # Create console handler
         handler = logging.StreamHandler()
         handler.setLevel(log_level)
-        
+
         # Create formatter
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         handler.setFormatter(formatter)
-        
+
         logger.addHandler(handler)
         return logger
+
+    def _configure_git_for_long_paths(self):
+        """Configure git to support long paths on Windows."""
+        try:
+            import platform
+            if platform.system() == 'Windows':
+                # Enable long path support in git
+                from git import Git
+                g = Git()
+                try:
+                    # Set core.longpaths to true for this git instance
+                    g.config('--global', 'core.longpaths', 'true')
+                    self.logger.info("Enabled git long path support (core.longpaths=true)")
+                except Exception as e:
+                    self.logger.warning(
+                        f"Could not enable git long path support: {e}. "
+                        "You may encounter 'Filename too long' errors. "
+                        "Run 'git config --global core.longpaths true' manually."
+                    )
+        except Exception as e:
+            self.logger.debug(f"Error configuring git for long paths: {e}")
     
     def authenticate(self) -> bool:
         """
@@ -262,41 +293,88 @@ class GitLabCloner:
     def _sanitize_name(self, name: str) -> str:
         """
         Sanitize project/group name for filesystem compatibility.
-        
+
         Args:
             name: Original name from GitLab
-            
+
         Returns:
             Sanitized name safe for filesystem use
         """
         # Strip leading/trailing whitespace
         sanitized = name.strip()
-        
+
         # Replace or remove characters that are problematic on Windows
         invalid_chars = '<>:"|?*'
         for char in invalid_chars:
             sanitized = sanitized.replace(char, '_')
-        
+
         # Remove trailing dots and spaces (Windows restriction)
         sanitized = sanitized.rstrip('. ')
-        
+
+        # If using short paths mode, truncate long names
+        if self.use_short_paths and len(sanitized) > 50:
+            # Keep first 45 chars and add hash of full name for uniqueness
+            import hashlib
+            name_hash = hashlib.md5(sanitized.encode()).hexdigest()[:5]
+            sanitized = f"{sanitized[:45]}_{name_hash}"
+            self.logger.debug(f"Shortened name: {name} -> {sanitized}")
+
         return sanitized if sanitized else 'unnamed'
+
+    def _check_path_length(self, path: Path, project_name: str) -> bool:
+        """
+        Check if path length exceeds Windows limits and log warnings.
+
+        Args:
+            path: Path to check
+            project_name: Name of the project (for logging)
+
+        Returns:
+            True if path is acceptable, False if it exceeds limits
+        """
+        path_str = str(path)
+        path_length = len(path_str)
+
+        # Windows MAX_PATH is 260, but we use a lower threshold for safety
+        # to account for files within the repository
+        if path_length > self.max_path_length:
+            self.logger.warning(
+                f"Path length ({path_length}) exceeds recommended limit ({self.max_path_length}) "
+                f"for project '{project_name}': {path_str}"
+            )
+            self.logger.warning(
+                "This may cause 'Filename too long' errors on Windows. "
+                "Consider using --use-short-paths option or a shorter destination path."
+            )
+            self.stats['path_warnings'] += 1
+            return False
+        elif path_length > 200:
+            # Soft warning for paths approaching the limit
+            self.logger.info(
+                f"Path length ({path_length}) is approaching Windows limits "
+                f"for project '{project_name}'"
+            )
+
+        return True
     
     def clone_repository(self, project: Any, local_path: Path) -> bool:
         """
         Clone a single repository or pull updates if it already exists.
-        
+
         Args:
             project: GitLab project object
             local_path: Local directory path where repo should be cloned
-            
+
         Returns:
             True if successful, False otherwise
         """
         # Sanitize the project name for filesystem compatibility
         sanitized_name = self._sanitize_name(project.name)
         repo_path = local_path / sanitized_name
-        
+
+        # Check path length before proceeding
+        self._check_path_length(repo_path, project.name)
+
         # If repository already exists, pull updates instead of skipping
         if repo_path.exists():
             self.logger.info(f"Repository already exists, pulling updates: {repo_path}")
@@ -312,11 +390,11 @@ class GitLabCloner:
                 self.logger.error(f"Error updating repository {project.name}: {e}")
                 self.stats['errors'] += 1
                 return False
-        
+
         try:
             # Create parent directory if it doesn't exist
             local_path.mkdir(parents=True, exist_ok=True)
-            
+
             # Clone the repository (prefer HTTPS over SSH)
             if hasattr(project, 'http_url_to_repo'):
                 clone_url = project.http_url_to_repo
@@ -328,27 +406,47 @@ class GitLabCloner:
                 self.logger.error(f"No clone URL available for {project.name}")
                 self.stats['errors'] += 1
                 return False
-            
+
             self.logger.info(f"Clone URL: {clone_url}")
-            
+
             # Clone the repository
+            # Long path support is already configured globally in _configure_git_for_long_paths
             repo = Repo.clone_from(clone_url, repo_path)
+
             self.logger.info(f"Successfully cloned: {repo_path}")
-            
+
             # Fetch all remote branches and create local tracking branches
             if self._fetch_all_remote_branches(repo, project):
                 self.logger.info(f"All branches available locally for {project.name}")
             else:
                 self.logger.warning(f"Some branches could not be fetched for {project.name}")
-            
+
             self.stats['repositories_cloned'] += 1
             if self.progress_manager:
                 self.progress_manager.update()
             return True
-            
+
         except GitCommandError as e:
             error_msg = f"Git error: {str(e)[:100]}"
-            self.logger.error(f"Git error cloning {project.name}: {e}")
+            error_str = str(e)
+
+            # Provide specific guidance for path length errors
+            if 'Filename too long' in error_str or 'unable to create file' in error_str:
+                self.logger.error(
+                    f"Path length error cloning {project.name}. "
+                    f"Try using --use-short-paths option or a shorter destination path. "
+                    f"Path: {repo_path}"
+                )
+                self.logger.error(
+                    "Windows path length solutions:\n"
+                    "  1. Use --use-short-paths flag\n"
+                    "  2. Use a shorter destination path (e.g., C:\\repos)\n"
+                    "  3. Enable Windows long path support: "
+                    "https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation"
+                )
+            else:
+                self.logger.error(f"Git error cloning {project.name}: {e}")
+
             if self.progress_manager:
                 self.progress_manager.record_error(project.name, "", error_msg)
             self.stats['errors'] += 1
@@ -473,6 +571,12 @@ class GitLabCloner:
         self.logger.info(f"Repositories cloned: {self.stats['repositories_cloned']}")
         self.logger.info(f"Repositories updated: {self.stats['repositories_updated']}")
         self.logger.info(f"Errors encountered: {self.stats['errors']}")
+        if self.stats['path_warnings'] > 0:
+            self.logger.warning(f"Path length warnings: {self.stats['path_warnings']}")
+            self.logger.warning(
+                "Consider using --use-short-paths option or a shorter destination path "
+                "to avoid Windows path length issues."
+            )
         self.logger.info("=" * 50)
 
 
@@ -482,18 +586,36 @@ class GitLabCloner:
 @click.option('--group', required=True, help='Group ID or group path to clone from')
 @click.option('--destination', required=True, help='Local destination path for cloned repositories')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
-def main(gitlab_url: str, token: str, group: str, destination: str, verbose: bool):
+@click.option('--use-short-paths', is_flag=True,
+              help='Use shortened directory names to avoid Windows path length limits (260 chars)')
+@click.option('--max-path-length', type=int, default=240,
+              help='Maximum path length before warning (default: 240 for Windows compatibility)')
+def main(gitlab_url: str, token: str, group: str, destination: str, verbose: bool,
+         use_short_paths: bool, max_path_length: int):
     """
     Recursively clone all Git repositories from a GitLab group hierarchy.
-    
+
     This tool will scan the specified GitLab group and all its subgroups,
     cloning repositories while maintaining the directory structure.
+
+    \b
+    Windows Long Path Support:
+    - Use --use-short-paths to automatically shorten directory names
+    - Use a short destination path (e.g., C:\\repos instead of C:\\Users\\...\\Documents\\...)
+    - Enable Windows long path support in registry (see README for instructions)
+    - Git will be automatically configured with core.longpaths=true
     """
     if verbose:
         logging.getLogger('gitlab_cloner').setLevel(logging.DEBUG)
-    
-    cloner = GitLabCloner(gitlab_url, token, destination)
-    
+
+    cloner = GitLabCloner(
+        gitlab_url,
+        token,
+        destination,
+        use_short_paths=use_short_paths,
+        max_path_length=max_path_length
+    )
+
     try:
         success = cloner.clone_group_recursively(group)
         sys.exit(0 if success else 1)
